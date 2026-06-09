@@ -1,6 +1,6 @@
 #include <iostream>
 #include "Application.h"
-
+#include "Constants.h"
 
 #define MOVEMENT_SPEED 2.0f
 #define ROTATION_DELTA_HEAD 0.05f
@@ -142,6 +142,16 @@ void Application::keyReleased(int key)
 		break;
 	case GLFW_KEY_LEFT_SHIFT :
 		shift = false;
+		break;
+	case GLFW_KEY_0:
+	case GLFW_KEY_1:
+	case GLFW_KEY_2:
+	case GLFW_KEY_3:
+	case GLFW_KEY_4:
+		scene.setGlobalLOD(key - GLFW_KEY_0);
+		break;
+	case GLFW_KEY_5:
+		scene.setGlobalLOD(EngineConfig::RUNTIME_OPTIMIZER_MODE); // TODO: Lab5 dynamic optimization trigger
 		break;
 	case GLFW_KEY_F1:
 		bNavigation = !bNavigation;

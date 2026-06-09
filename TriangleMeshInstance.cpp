@@ -1,11 +1,17 @@
 #include "Application.h"
 #include "TriangleMeshInstance.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include "Constants.h"
 
 
 TriangleMeshInstance::TriangleMeshInstance()
 {
-	mesh = NULL;
+	staticMesh = NULL;
+	bUseLOD = false;
+	currentLOD = 0;
+	for(int i = 0; i < EngineConfig::NUM_LOD_LEVELS; ++i){
+		LODMeshes[i] = NULL;
+	}
 	metallic = 0.0f;
 	roughness = 1.0f;
 }
@@ -15,31 +21,58 @@ TriangleMeshInstance::~TriangleMeshInstance()
 }
 
 
-void TriangleMeshInstance::init(TriangleMesh *mesh, const glm::vec4 &color, const glm::mat4 &transform, float metallic, float roughness)
+void TriangleMeshInstance::initStatic(TriangleMesh *staticMesh, const glm::vec4 &color, const glm::mat4 &transform, float metallic, float roughness)
 {
-	this->mesh = mesh;
+	this->staticMesh = staticMesh;
 	this->color = color;
 	this->transform = transform;
 	this->metallic = metallic;
 	this->roughness = roughness;
+	bUseLOD = false; // Disables LOD processing routines
+}
+
+void TriangleMeshInstance::initLOD(TriangleMesh *lods[EngineConfig::NUM_LOD_LEVELS], const glm::vec4 &color, const glm::mat4 &transform, float metallic, float roughness)
+{
+	for(int i = 0; i < EngineConfig::NUM_LOD_LEVELS; ++i){
+		LODMeshes[i] = lods[i];
+	}
+	this->color = color;
+	this->transform = transform;
+	this->metallic = metallic;
+	this->roughness = roughness;
+	bUseLOD = true; // Enables LOD processing routines
+	currentLOD = EngineConfig::NUM_LOD_LEVELS - 1; // Start coarse
+}
+
+void TriangleMeshInstance::setLODLevel(int level) {
+    if (!bUseLOD){
+		return; // Protect background walls/floors
+	}
+    
+    if (level == EngineConfig::RUNTIME_OPTIMIZER_MODE) {
+		// TODO: Lab5 Reserved for upcoming dynamic calculations
+    } else {
+        currentLOD = level;
+    }
 }
 
 void TriangleMeshInstance::render()
 {
-	if(mesh != NULL)
+	TriangleMesh* meshToRender = bUseLOD ? LODMeshes[currentLOD] : staticMesh;
+	if(meshToRender != NULL)
 	{
 		Application::instance().getShader()->use();
  		Application::instance().getShader()->setUniform4f("color", color.r, color.g, color.b, color.a);
 		Application::instance().getShader()->setUniform1f("metallic", metallic);
 		Application::instance().getShader()->setUniform1f("roughness", roughness);
 		Application::instance().getShader()->setUniformMatrix4f("model", transform);
-		mesh->render();
+		meshToRender->render();
 	}
 }
 
-TriangleMesh *TriangleMeshInstance::getMesh()
+TriangleMesh *TriangleMeshInstance::getStaticMesh()
 {
-	return mesh;
+	return staticMesh;
 }
 
 void TriangleMeshInstance::setTransform(const glm::mat4 &transform)

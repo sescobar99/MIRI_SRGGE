@@ -6,6 +6,7 @@
 #include "Scene.h"
 #include "PLYReader.h"
 #include "Application.h"
+#include "Constants.h"
 
 
 Scene::Scene()
@@ -17,9 +18,6 @@ Scene::~Scene()
 {
 	if(meshCube != NULL)
 		delete meshCube;
-
-    for(vector<TriangleMesh *>::iterator it=loadedMeshes.begin(); it!=loadedMeshes.end(); it++)
-        delete *it;
 
 	for(vector<TriangleMeshInstance *>::iterator it=objects.begin(); it!=objects.end(); it++)
 		delete *it;
@@ -89,27 +87,38 @@ bool Scene::loadMap(const string &filename)
         if (!(fin >> modelPath)){
             return false;
         }
-        
-        TriangleMesh* mesh = loadMesh(modelPath);
-        if (mesh != NULL) {
-            loadedMeshes.push_back(mesh);
-            cout << "Loaded model: " << modelPath << endl;
-        } else {
-            std::cerr << "Failed to load model: " << modelPath << std::endl;
+
+        ModelLODGroup group;
+        bool loadSuccess = true;
+        // Ensure all LOD variants are generated/cached up front
+        for (int lodLevel = 0; lodLevel < EngineConfig::NUM_LOD_LEVELS; ++lodLevel) {
+            // Load Mesh internally delegates the LOD generation to PLYReader, which 
+            // checks for existing LOD files and creates them if they don't exist
+            group.lod[lodLevel] = loadMesh(modelPath, lodLevel);
+            if(group.lod[lodLevel] == NULL) {
+                loadSuccess = false;
+                cerr << "Failed to load LOD level " << lodLevel << " for model: " << modelPath << std::endl;
+                break;
+            }
+            cout << "Successfully loaded LOD level " << lodLevel << " for model: " << modelPath << std::endl;
+        }
+        if (!loadSuccess){
             return false;
         }
+        loadedModels.push_back(group);
     }
 
     // Instance placement
-    placeInstances(fin);
+    currentGlobalLOD = EngineConfig::NUM_LOD_LEVELS - 1; // Start system initialized to coarsest level
+    bool success = placeInstances(fin);
 
     fin.close();
-	return true;
+	return success;
 }
 
 // Loads the mesh into CPU memory and sends it to GPU memory (using GL)
 
-TriangleMesh *Scene::loadMesh(const string &filename) const
+TriangleMesh *Scene::loadMesh(const string &filename, int lodLevel) const
 {
 	TriangleMesh *mesh;
 #pragma warning( push )
@@ -118,7 +127,7 @@ TriangleMesh *Scene::loadMesh(const string &filename) const
 #pragma warning( pop ) 
 
 	mesh = new TriangleMesh();
-	bool bSuccess = reader.readMesh(filename, *mesh);
+	bool bSuccess = reader.readMesh(filename, *mesh, lodLevel);
 	if(bSuccess)
 		mesh->sendToOpenGL();
 	else
@@ -147,6 +156,17 @@ void Scene::render()
 VectorCamera &Scene::getCamera()
 {
 	return camera;
+}
+
+
+void Scene::setGlobalLOD(int level) {
+    // RUNTIME_OPTIMIZER_MODE will be used for Lab 5 dynamic lod for time critical rendering
+    if (level >= 0 && level < EngineConfig::RUNTIME_OPTIMIZER_MODE) {
+        currentGlobalLOD = level;
+        for (std::vector<TriangleMeshInstance*>::iterator it = objects.begin(); it != objects.end(); ++it) {
+            if (*it != nullptr) (*it)->setLODLevel(level);
+        }
+    }
 }
 
 void Scene::buildRoom(const vector<string> &grid, int columns, int rows)
@@ -180,14 +200,14 @@ void Scene::buildRoom(const vector<string> &grid, int columns, int rows)
                 // WALL: Scale up vertically, translate up by half its height
                 transform = glm::translate(transform, glm::vec3(worldX, wallHeight / 2.0f, worldZ));
                 transform = glm::scale(transform, glm::vec3(tileWidth, wallHeight, tileWidth));
-                instance->init(meshCube, glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), transform, 0.0f, 0.9f);
+                instance->initStatic(meshCube, glm::vec4(0.6f, 0.6f, 0.6f, 1.0f), transform, 0.0f, 0.9f);
                 objects.push_back(instance);
             } 
             else if (tile == '0') {
                 // FLOOR: Flat tile slightly lowered below the Y=0 threshold
                 transform = glm::translate(transform, glm::vec3(worldX, -floorThickness / 2.0f, worldZ));
                 transform = glm::scale(transform, glm::vec3(tileWidth, floorThickness, tileWidth));
-                instance->init(meshCube, glm::vec4(0.137f, 0.094f, 0.074f, 1.0f), transform, 0.1f, 0.85f);
+                instance->initStatic(meshCube, glm::vec4(0.137f, 0.094f, 0.074f, 1.0f), transform, 0.1f, 0.85f);
                 objects.push_back(instance);
             }
         }
@@ -199,7 +219,7 @@ void Scene::buildRoom(const vector<string> &grid, int columns, int rows)
 	transform = glm::translate(transform, glm::vec3(0.f, 2.05f, 0.f));
 	transform = glm::scale(transform, glm::vec3(columns * tileWidth, 0.1f, rows * tileWidth));
 	instance = new TriangleMeshInstance();
-	instance->init(meshCube, glm::vec4(0.525f, 0.517f, 0.478f, 1.0f), transform, 0.1f, 0.65f);
+	instance->initStatic(meshCube, glm::vec4(0.525f, 0.517f, 0.478f, 1.0f), transform, 0.1f, 0.65f);
 	objects.push_back(instance);
     
 	// // Base
@@ -207,7 +227,7 @@ void Scene::buildRoom(const vector<string> &grid, int columns, int rows)
 	// transform = glm::translate(transform, glm::vec3(0.0, 0.0f, -1.0f));
 	// transform = glm::scale(transform, glm::vec3(0.5f, 0.75f, 0.5f));
 	// instance = new TriangleMeshInstance();
-	// instance->init(meshBase, glm::vec4(1.0f), transform, 0.15f, 0.75f);
+	// instance->initStatic(meshBase, glm::vec4(1.0f), transform, 0.15f, 0.75f);
 	// objects.push_back(instance);
 
 }
@@ -235,7 +255,7 @@ bool Scene::placeInstances(ifstream &fin)
         }
 
         // Validation guard
-        if (modelIndex < 0 || modelIndex >= static_cast<int>(loadedMeshes.size())){
+        if (modelIndex < 0 || modelIndex >= static_cast<int>(loadedModels.size())){
             cout << "Invalid model index for instance: " << modelIndex << endl;
             return false;
         }
@@ -253,7 +273,7 @@ bool Scene::placeInstances(ifstream &fin)
 
         // Create the individual 
         instance = new TriangleMeshInstance();
-        instance->init(loadedMeshes[modelIndex], glm::vec4(1.0f), transform, 0.0f, 1.0f);
+        instance->initLOD(loadedModels[modelIndex].lod, glm::vec4(1.0f), transform, 0.0f, 1.0f);
         
         objects.push_back(instance);
     }

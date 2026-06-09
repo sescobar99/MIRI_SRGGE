@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 #include "TriangleMesh.h"
+#include "Constants.h"
 
 
 class TriangleMeshInstance
@@ -12,11 +13,18 @@ class TriangleMeshInstance
 public:
 	TriangleMeshInstance();
 	~TriangleMeshInstance();
-	
-	void init(TriangleMesh *mesh, const glm::vec4 &color = glm::vec4(1.0f), const glm::mat4 &transform = glm::mat4(1.0f), float metallic = 0.0f, float roughness = 1.0f);
+	// Lab 2
+	// For background architecture (Floor, Walls, Ceiling) - NEVER changes resolution
+	void initStatic(TriangleMesh *staticMesh, const glm::vec4 &color = glm::vec4(1.0f), const glm::mat4 &transform = glm::mat4(1.0f), float metallic = 0.0f, float roughness = 1.0f);
+	// Lab 2
+	// For Museum Exhibits - Responds to LOD updates
+    void initLOD(TriangleMesh* lods[EngineConfig::NUM_LOD_LEVELS], const glm::vec4 &color = glm::vec4(1.0f), const glm::mat4 &transform = glm::mat4(1.0f), float metallic = 0.0f, float roughness = 1.0f);
+
+	void setLODLevel(int level);
 	void render();
 	
-	TriangleMesh *getMesh();
+	// Lab 2
+	TriangleMesh *getStaticMesh();
 	
 	void setTransform(const glm::mat4 &transform);
 	const glm::mat4 &getTransform() const;
@@ -34,7 +42,22 @@ public:
 	float getRoughness() const;
 	
 private:
-	TriangleMesh *mesh;
+	// Lab 2 
+	// For Museum Exhibits - Holds pointers to all LOD variants of the mesh, and switches between 
+	// them based on the LOD designation of the instance
+	TriangleMesh *LODMeshes[EngineConfig::NUM_LOD_LEVELS];
+
+	// Lab 2 
+	// For background architecture (Floor, Walls, Ceiling) - Static mesh that doesn't change with LOD updates
+	TriangleMesh *staticMesh;
+
+	// Lab 2 
+	// Flag for LOD processing routines
+    bool bUseLOD;
+
+	// Lab 2 
+	// Tracks the currently active LOD level for this instance
+	int currentLOD;
 	glm::vec4 color;
 	glm::mat4 transform;
 	float metallic;
