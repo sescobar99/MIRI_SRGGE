@@ -2,5 +2,5 @@ cmake_modules/
 gl3w/
 glm/
 windows/
-
+build/
 *.ply

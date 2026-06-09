@@ -22,7 +22,8 @@ VectorCamera::~VectorCamera()
 void VectorCamera::init(const glm::vec3 &initPosition)
 {
 	position = initPosition;
-	angleDirection = 180.f;
+	// angleDirection = 180.f;
+	angleDirection = 90.0f;
 	rangeDistanceCamera[0] = 0.01f;
 	rangeDistanceCamera[1] = 100.f;
 	computeViewMatrix();

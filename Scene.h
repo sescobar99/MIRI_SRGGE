@@ -34,11 +34,13 @@ public:
 private:
 	void computeModelViewMatrix();
 	
-	void buildRoom();
+	void buildRoom(const vector<string> &grid, int columns, int rows);
+	bool placeInstances(ifstream &fin);
 
 private:
 	VectorCamera camera;
-	TriangleMesh *meshCube, *meshFigurine, *meshWall, *meshBase;
+	TriangleMesh *meshCube;
+	vector<TriangleMesh *> loadedMeshes;
 	vector<TriangleMeshInstance *> objects;
 	float currentTime;
 

@@ -15,6 +15,7 @@ set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 execute_process(COMMAND ln -s ../shaders)
+execute_process(COMMAND ln -s ../models)
 
 set(appName SRGGE)
 
