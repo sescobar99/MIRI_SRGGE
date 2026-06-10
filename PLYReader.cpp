@@ -4,39 +4,98 @@
 #include <string>
 #include "PLYReader.h"
 
+#include <unordered_map>
+#include <cmath>
+#include <glm/gtx/hash.hpp>
+
+
+
+// Helper function to generate the LOD filename (e.g., "bunny.ply" -> "bunny_LOD1.ply")
+string PLYReader::getLODFilename(const string &originalPath, int lodLevel) {
+    if (lodLevel == 0){
+		return originalPath;
+    }
+    size_t dotPos = originalPath.find_last_of('.');
+    return originalPath.substr(0, dotPos) + "_LOD" + to_string(lodLevel) + ".ply";
+}
 
 // Reads the mesh from the PLY file, first the header, then the vertex data, 
 // and finally the face data. Then it rescales the model so that it fits a
 // box of size 1x1x1 centered at the origin
 
-bool PLYReader::readMesh(const string &filename, TriangleMesh &mesh)
+bool PLYReader::readMesh(const string &filename, TriangleMesh &mesh, int lodLevel)
 {
-	ifstream fin;
+	string targetFilename = getLODFilename(filename, lodLevel);
+    ifstream fin(targetFilename.c_str(), ios_base::in | ios_base::binary);
+
 	int nVertices, nFaces;
 	bool hasColors = false;
 	bool hasAlpha = false;
 
-	fin.open(filename.c_str(), ios_base::in | ios_base::binary);
-	if(!fin.is_open())
-		return false;
-	if(!loadHeader(fin, nVertices, nFaces, hasColors, hasAlpha))
-	{
+	// HIT: Requested LOD already exists
+    if (fin.is_open()) {
+
+		if(!loadHeader(fin, nVertices, nFaces, hasColors, hasAlpha))
+		{
+			cerr << "Failed to load header for file: " << targetFilename << std::endl;
+			fin.close();
+			return false;
+		} 
+		
+		vector<float> plyVertices;
+		vector<float> plyColors;
+		vector<int> plyTriangles;
+		loadVertices(fin, nVertices, plyVertices, plyColors, hasColors, hasAlpha);
+		loadFaces(fin, nFaces, plyTriangles);
 		fin.close();
-		return false;
+		
+		// If it's a pre-cached LOD file, it's already rescaled. Only rescale original files.
+		if (lodLevel == 0){
+			rescaleModel(plyVertices);
+		}
+		addModelToMesh(plyVertices, plyColors, plyTriangles, mesh);
+		return true;
+    }
+	
+	// MISS: Need to load original file, process it, and save the LOD version for future 
+    ifstream finOrig(filename.c_str(), ios_base::in | ios_base::binary);
+    if (!finOrig.is_open()){
+		return false; // Original base asset missing completely
 	}
+	
+	if (!loadHeader(finOrig, nVertices, nFaces, hasColors, hasAlpha)) {
+		cerr << "Failed to load header for file: " << filename << std::endl;
+        finOrig.close();
+        return false;
+    }
+    
+    vector<float> origVertices, simplifiedVertices;
+	vector<float> origColors, simplifiedColors;
+    vector<int> origTriangles, simplifiedTriangles;
+    
+    loadVertices(finOrig, nVertices, origVertices, origColors, hasColors, hasAlpha);
+    loadFaces(finOrig, nFaces, origTriangles);
+    finOrig.close();
 
-	vector<float> plyVertices;
-	vector<float> plyColors;
-	vector<int> plyTriangles;
+    // Standardize coordinate sizes around uniform space constraints before processing geometry
+    rescaleModel(origVertices);
 
-	loadVertices(fin, nVertices, plyVertices, plyColors, hasColors, hasAlpha);
-	loadFaces(fin, nFaces, plyTriangles);
-	fin.close();
+    // Space partitioning cell size is determined by the LOD level. 
+	// Higher LOD levels have larger cell sizes, resulting in more aggressive simplification.
+    float targetCellSize = EngineConfig::CLUSTERING_CELL_SIZES[lodLevel];
+    // Lab 2. Vertex clustering function 
+    clusterVertices(origVertices, origColors, origTriangles, targetCellSize, 
+                    simplifiedVertices, simplifiedColors, simplifiedTriangles);
 
-	rescaleModel(plyVertices);
-	addModelToMesh(plyVertices, plyColors, plyTriangles, mesh);
+    // Store simplified mesh
+    if (saveMeshToPLY(targetFilename, simplifiedVertices, simplifiedColors, simplifiedTriangles)) {
+        cout << "Successfully stored simplified mesh. " << targetFilename << endl;
+    } else {
+        cerr << "WARNING: Failed to store simplified mesh. " << targetFilename << endl;
+    }
 
-	return true;
+    addModelToMesh(simplifiedVertices, simplifiedColors, simplifiedTriangles, mesh);
+    return true;
 }
 
 // Reads the header of a PLY file.
@@ -189,4 +248,148 @@ void PLYReader::addModelToMesh(const vector<float> &plyVertices, const vector<fl
 {
 	mesh.initVertices(plyVertices, plyColors);
 	mesh.initTriangles(plyTriangles);
+}
+
+
+
+struct CellData {
+    glm::vec3 sumPos = glm::vec3(0.0f);
+    glm::vec3 sumColor = glm::vec3(0.0f);
+    int count = 0;
+    int targetIndex = -1;
+};
+
+
+void PLYReader::clusterVertices(const vector<float> &inVertices, const vector<float> &inColors, const vector<int> &inTriangles,
+                                float cellSize,
+                                vector<float> &outVertices, vector<float> &outColors, vector<int> &outTriangles)
+{
+    std::unordered_map<glm::ivec3, CellData> grid;
+
+    // Phase 1: Grid Discretization and Accumulation
+	// For each vertex in a model
+    int numVertices = inVertices.size() / 3;
+    for (int i = 0; i < numVertices; ++i) {
+        glm::vec3 pos(inVertices[3 * i], inVertices[3 * i + 1], inVertices[3 * i + 2]);
+        glm::vec3 col(inColors[3 * i], inColors[3 * i + 1], inColors[3 * i + 2]);
+		
+		// 1. Compute which regular grid node contains it
+        glm::ivec3 coord(
+            std::floor(pos.x / cellSize),
+            std::floor(pos.y / cellSize),
+            std::floor(pos.z / cellSize)
+        );
+		// 2. Add to sum of points in that cell (+ add one to count of points)
+        CellData &cell = grid[coord];
+        cell.sumPos += pos;
+        cell.sumColor += col;
+        cell.count++;
+    }
+
+
+    // Phase 2: Compute Representatives (Averages)
+    int nextIndex = 0;
+	// For each node with points
+	for (std::unordered_map<glm::ivec3, CellData>::iterator it = grid.begin(); it != grid.end(); ++it) {
+		// 1. Add representative in that node as output vertex
+		CellData &cell = it->second;
+        glm::vec3 avgPos = cell.sumPos / static_cast<float>(cell.count);
+        glm::vec3 avgCol = cell.sumColor / static_cast<float>(cell.count);
+
+        outVertices.push_back(avgPos.x);
+        outVertices.push_back(avgPos.y);
+        outVertices.push_back(avgPos.z);
+
+        outColors.push_back(avgCol.x);
+        outColors.push_back(avgCol.y);
+        outColors.push_back(avgCol.z);
+
+		// 2. Store the id of that output vertex in node
+        cell.targetIndex = nextIndex++;
+    }
+
+    // Phase 3: Topology Remapping and Triangle Elimination
+	// For each input triangle T
+    for (size_t i = 0; i < inTriangles.size(); i += 3) {
+		int origIdx0 = inTriangles[i];
+        int origIdx1 = inTriangles[i + 1];
+        int origIdx2 = inTriangles[i + 2];
+
+		// 1. Determine node that contains each vertex of T
+        glm::ivec3 coord0(
+            std::floor(inVertices[3 * origIdx0] / cellSize),
+            std::floor(inVertices[3 * origIdx0 + 1] / cellSize),
+            std::floor(inVertices[3 * origIdx0 + 2] / cellSize)
+        );
+        
+        glm::ivec3 coord1(
+            std::floor(inVertices[3 * origIdx1] / cellSize),
+            std::floor(inVertices[3 * origIdx1 + 1] / cellSize),
+            std::floor(inVertices[3 * origIdx1 + 2] / cellSize)
+        );
+        
+        glm::ivec3 coord2(
+            std::floor(inVertices[3 * origIdx2] / cellSize),
+            std::floor(inVertices[3 * origIdx2 + 1] / cellSize),
+            std::floor(inVertices[3 * origIdx2 + 2] / cellSize)
+        );
+
+		// 2. Update id in triangle to the one stored in node
+        int id0 = grid[coord0].targetIndex;
+        int id1 = grid[coord1].targetIndex;
+        int id2 = grid[coord2].targetIndex;
+
+		// 3. If triangle has unique ids output it (Filters Degenerate Faces)
+        if (id0 != id1 && id1 != id2 && id2 != id0) {
+            outTriangles.push_back(id0);
+            outTriangles.push_back(id1);
+            outTriangles.push_back(id2);
+        }
+    }
+}
+
+bool PLYReader::saveMeshToPLY(const string &filename, const vector<float> &vertices, const vector<float> &colors, const vector<int> &triangles)
+{
+    ofstream fout(filename, ios_base::out | ios_base::binary);
+    if (!fout.is_open()) return false;
+
+    int numVertices = vertices.size() / 3;
+    int numFaces = triangles.size() / 3;
+
+	// Headers
+    fout << "ply\n";
+    fout << "format binary_little_endian 1.0\n";
+    fout << "element vertex " << numVertices << "\n";
+    fout << "property float x\n";
+    fout << "property float y\n";
+    fout << "property float z\n";
+    fout << "property uchar red\n";
+    fout << "property uchar green\n";
+    fout << "property uchar blue\n";	
+    fout << "element face " << numFaces << "\n";
+    fout << "property list uchar int vertex_indices\n";
+    fout << "end_header\n";
+
+	// Binary info
+    for (int i = 0; i < numVertices; ++i) {
+		// Geometry
+        fout.write(reinterpret_cast<const char*>(&vertices[3 * i]), 3 * sizeof(float));
+		// Color
+        unsigned char r = static_cast<unsigned char>(colors[3 * i] * 255.0f);
+        unsigned char g = static_cast<unsigned char>(colors[3 * i + 1] * 255.0f);
+        unsigned char b = static_cast<unsigned char>(colors[3 * i + 2] * 255.0f);
+        fout.write(reinterpret_cast<const char*>(&r), sizeof(unsigned char));
+        fout.write(reinterpret_cast<const char*>(&g), sizeof(unsigned char));
+        fout.write(reinterpret_cast<const char*>(&b), sizeof(unsigned char));
+    }
+
+    unsigned char verticesPerFace = 3;
+    for (int i = 0; i < numFaces; ++i) {
+		// Topology
+        fout.write(reinterpret_cast<const char*>(&verticesPerFace), sizeof(unsigned char));
+        fout.write(reinterpret_cast<const char*>(&triangles[3 * i]), 3 * sizeof(int));
+    }
+
+    fout.close();
+    return true;
 }
