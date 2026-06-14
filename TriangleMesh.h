@@ -1,21 +1,17 @@
 #ifndef _TRIANGLE_MESH_INCLUDE
 #define _TRIANGLE_MESH_INCLUDE
 
-
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
 #include "ShaderProgram.h"
 
-
 using namespace std;
-
 
 // Class TriangleMesh contains the geometry of a mesh built out of triangles.
 // Both the vertices and the triangles are stored in vectors.
-// TriangleMesh also manages the ids of the copy in the GPU, so as to 
+// TriangleMesh also manages the ids of the copy in the GPU, so as to
 // be able to render it using OpenGL.
-
 
 class TriangleMesh
 {
@@ -31,10 +27,12 @@ public:
 	void initTriangles(const vector<int> &newTriangles);
 
 	void buildCube();
-	
+
 	void sendToOpenGL();
 	void render() const;
 	void free();
+
+	size_t getFaceCount() const { return faceCount; }
 
 private:
 	vector<glm::vec3> vertices;
@@ -44,9 +42,8 @@ private:
 	GLuint vao;
 	GLuint vbo;
 	GLint posLocation, normalLocation, colorLocation;
-	
+
+	size_t faceCount = 0;
 };
 
-
 #endif // _TRIANGLE_MESH_INCLUDE
-

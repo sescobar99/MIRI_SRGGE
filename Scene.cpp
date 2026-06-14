@@ -18,8 +18,27 @@ Scene::~Scene()
     if (meshCube != NULL)
         delete meshCube;
 
+    // Free instances
     for (vector<TriangleMeshInstance *>::iterator it = objects.begin(); it != objects.end(); it++)
+    {
         delete *it;
+    }
+    objects.clear();
+
+    // Free original models
+    for (auto &modelGroup : loadedModels)
+    {
+        for (int i = 0; i < EngineConfig::NUM_LOD_LEVELS; ++i)
+        {
+            if (modelGroup.lod[i] != nullptr)
+            {
+                modelGroup.lod[i]->free();
+                delete modelGroup.lod[i];
+                modelGroup.lod[i] = nullptr;
+            }
+        }
+    }
+    loadedModels.clear();
 }
 
 // Initialize the scene. This includes the cube we will use to render
