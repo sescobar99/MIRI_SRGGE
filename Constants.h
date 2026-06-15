@@ -15,13 +15,28 @@ namespace EngineConfig
 
     // Cell scaling dimension boundaries for the clustering matrix
     // Level 0 uses a dummy 0.0f value since it maps directly to the original asset
-    const float CLUSTERING_CELL_SIZES[NUM_LOD_LEVELS] = {
+    const float CLUSTERING_CELL_SIZES_BC[NUM_LOD_LEVELS] = {
         0.000f, // LOD 0: Baseline Asset
         0.010f, // LOD 1: Fine
         0.030f, // LOD 2: Medium
         0.060f, // LOD 3: Coarse
         0.120f  // LOD 4: Coarsest
     };
+    // These are good values for regular vertex clustering but no coarse enough for normal clustering
+
+    const float CLUSTERING_CELL_SIZES_NC[NUM_LOD_LEVELS] = {
+        0.000f, // LOD 0: Baseline Asset
+        0.020f, // LOD 1: Fine
+        0.060f, // LOD 2: Medium
+        0.120f, // LOD 3: Coarse
+        0.240f  // LOD 4: Coarsest
+    };
 }
+
+enum class ClusteringMode
+{
+    Basic,
+    NormalClustering
+};
 
 #endif // CONSTANTS_H

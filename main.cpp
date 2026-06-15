@@ -92,7 +92,18 @@ int main(int argc, char *argv[])
     Application::instance().resize(VIEWPORT_INIT_WIDTH, VIEWPORT_INIT_HEIGHT);
 
     if (argc > 1)
-        Application::instance().loadMap(argv[1]);
+    {
+        ClusteringMode mode = ClusteringMode::Basic; // Default fallback
+        if (argc > 2)
+        {
+            std::string modeStr = argv[2];
+            if (modeStr == "normalClustering")
+            {
+                mode = ClusteringMode::NormalClustering;
+            }
+        }
+        Application::instance().loadMap(argv[1], mode);
+    }
 
     timePreviousFrame = glfwGetTime();
 

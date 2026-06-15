@@ -22,9 +22,9 @@ public:
 
     void init();
     // Lab 1
-    bool loadMap(const string &filename);
+    bool loadMap(const string &filename, ClusteringMode mode);
     // Lab 2
-    TriangleMesh *loadMesh(const string &filename, int lodLevel = 0) const;
+    TriangleMesh *loadMesh(const string &filename, int lodLevel = 0, ClusteringMode mode = ClusteringMode::Basic) const;
     void update(int deltaTime);
     void render();
 

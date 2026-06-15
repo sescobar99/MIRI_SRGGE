@@ -9,23 +9,24 @@
 #include <glm/gtx/hash.hpp>
 
 // Helper function to generate the LOD filename (e.g., "bunny.ply" -> "bunny_LOD1.ply")
-string PLYReader::getLODFilename(const string &originalPath, int lodLevel)
+string PLYReader::getLODFilename(const string &originalPath, int lodLevel, ClusteringMode mode)
 {
     if (lodLevel == 0)
     {
         return originalPath;
     }
+    string modeSuffix = (mode == ClusteringMode::NormalClustering) ? "_nc" : "_bc";
     size_t dotPos = originalPath.find_last_of('.');
-    return originalPath.substr(0, dotPos) + "_LOD" + to_string(lodLevel) + ".ply";
+    return originalPath.substr(0, dotPos) + "_LOD" + to_string(lodLevel) + modeSuffix + ".ply";
 }
 
 // Reads the mesh from the PLY file, first the header, then the vertex data,
 // and finally the face data. Then it rescales the model so that it fits a
 // box of size 1x1x1 centered at the origin
 
-bool PLYReader::readMesh(const string &filename, TriangleMesh &mesh, int lodLevel)
+bool PLYReader::readMesh(const string &filename, TriangleMesh &mesh, int lodLevel, ClusteringMode mode)
 {
-    string targetFilename = getLODFilename(filename, lodLevel);
+    string targetFilename = getLODFilename(filename, lodLevel, mode);
     ifstream fin(targetFilename.c_str(), ios_base::in | ios_base::binary);
 
     int nVertices, nFaces;
@@ -86,9 +87,25 @@ bool PLYReader::readMesh(const string &filename, TriangleMesh &mesh, int lodLeve
 
     // Space partitioning cell size is determined by the LOD level.
     // Higher LOD levels have larger cell sizes, resulting in more aggressive simplification.
-    float targetCellSize = EngineConfig::CLUSTERING_CELL_SIZES[lodLevel];
-    // Lab 2. Vertex clustering function
-    clusterVertices(origVertices, origColors, origTriangles, targetCellSize,
+
+    float targetCellSize;
+    switch (mode)
+    {
+    case ClusteringMode::NormalClustering:
+        targetCellSize = EngineConfig::CLUSTERING_CELL_SIZES_NC[lodLevel];
+        break;
+
+    case ClusteringMode::Basic:
+    default:
+        targetCellSize = EngineConfig::CLUSTERING_CELL_SIZES_BC[lodLevel];
+        break;
+    }
+
+    // // Lab 2. Vertex clustering function
+    // clusterVertices(origVertices, origColors, origTriangles, targetCellSize,
+    //                 simplifiedVertices, simplifiedColors, simplifiedTriangles);
+    clusterVertices(origVertices, origColors, origTriangles,
+                    targetCellSize, mode,
                     simplifiedVertices, simplifiedColors, simplifiedTriangles);
 
     // Store simplified mesh
@@ -257,248 +274,175 @@ void PLYReader::addModelToMesh(const vector<float> &plyVertices, const vector<fl
     mesh.initTriangles(plyTriangles);
 }
 
-/*  Lab 2
-struct CellData {
-    glm::vec3 sumPos = glm::vec3(0.0f);
-    glm::vec3 sumColor = glm::vec3(0.0f);
-    int count = 0;
-    int targetIndex = -1;
-};
-*/
-
-// Represents a specific normal-octant bucket inside a spatial cell
-struct SubCellData
+// Extended key: spatial cell + normal-space cell
+struct ClusterKey
 {
-    glm::vec3 sumPos = glm::vec3(0.0f);
-    glm::vec3 sumColor = glm::vec3(0.0f);
-    int count = 0;
-    int targetIndex = -1;
+    glm::ivec3 spatialCell;
+    glm::ivec3 normalCell; // (0,0,0) for basic clustering
+
+    bool operator==(const ClusterKey &o) const
+    {
+        return spatialCell == o.spatialCell && normalCell == o.normalCell;
+    }
 };
 
-// Represents a single 3D grid cell spatial coordinate bounding zone
+struct ClusterKeyHash
+{
+    size_t operator()(const ClusterKey &k) const
+    {
+        size_t h1 = std::hash<glm::ivec3>()(k.spatialCell);
+        size_t h2 = std::hash<glm::ivec3>()(k.normalCell);
+        return h1 ^ (h2 * 2654435761u); // Knuth
+    }
+};
+
 struct CellData
 {
-    SubCellData subCells[8]; // 8-way quantized normal sub-nodes
+    glm::vec3 sumPos = glm::vec3(0.0f);
+    glm::vec3 sumColor = glm::vec3(0.0f);
+    int count = 0;
+    int targetIndex = -1;
 };
 
-// Helper for normal quantization
-/*
- *
- * OCTANT BITMASK LOOKUP
- * Index | x sign | y Sign | z Sign | Bitmask |
- * 0      +         +        +        000
- * 1      +         +        -        001
- * 2      +         -        +        010
- * 3      +         -        -        011
- * 4      -         +        +        100
- * 5      -         +        -        101
- * 6      -         -        +        110
- * 7      -         -        -        111
- * + (>= 0)
- * - (< 0)
- */
-int getNormalOctant(const glm::vec3 &normal)
+// Helper: builds the ClusterKey for a single vertex. In basic mode, normalCell is always (0,0,0)
+static ClusterKey makeKey(const glm::vec3 &pos, const glm::vec3 &normal,
+                          float cellSize, ClusteringMode mode)
 {
-    int index = 0;
-    if (normal.x < 0.0f)
-        index |= 4; // Binary: 100
-    if (normal.y < 0.0f)
-        index |= 2; // Binary: 010
-    if (normal.z < 0.0f)
-        index |= 1; // Binary: 001
-    return index;
+    glm::ivec3 spatialCell(
+        (int)std::floor(pos.x / cellSize),
+        (int)std::floor(pos.y / cellSize),
+        (int)std::floor(pos.z / cellSize));
+
+    glm::ivec3 normalCell(0, 0, 0);
+    if (mode == ClusteringMode::NormalClustering)
+    {
+        constexpr int NORMAL_BINS = 8;
+        constexpr float NORMAL_CELL_SIZE = 2.0f / NORMAL_BINS;
+        // How much angular difference before splitting a cell
+
+        normalCell = glm::ivec3(
+            (int)std::floor((normal.x + 1.0f) / NORMAL_CELL_SIZE),
+            (int)std::floor((normal.y + 1.0f) / NORMAL_CELL_SIZE),
+            (int)std::floor((normal.z + 1.0f) / NORMAL_CELL_SIZE));
+        // Clamp handles boundary normals that sit exactly on 1.0
+        normalCell = glm::clamp(normalCell, glm::ivec3(0), glm::ivec3(NORMAL_BINS - 1));
+    }
+
+    return ClusterKey{spatialCell, normalCell};
 }
 
 void PLYReader::clusterVertices(const vector<float> &inVertices, const vector<float> &inColors, const vector<int> &inTriangles,
-                                float cellSize,
+                                float cellSize, ClusteringMode mode,
                                 vector<float> &outVertices, vector<float> &outColors, vector<int> &outTriangles)
 {
-    std::unordered_map<glm::ivec3, CellData> grid;
-    /* Lab 2
-    // Phase 1: Grid Discretization and Accumulation
-    // For each vertex in a model
     int numVertices = inVertices.size() / 3;
-    for (int i = 0; i < numVertices; ++i) {
+    int numTriangles = inTriangles.size() / 3;
+
+    // Phase 0: Compute per-vertex normals (unweighted and  only needed for normal clustering)
+    vector<glm::vec3> vertexNormals(numVertices, glm::vec3(0.0f));
+
+    if (mode == ClusteringMode::NormalClustering)
+    {
+        for (int i = 0; i < numTriangles; ++i)
+        {
+            int i0 = inTriangles[3 * i];
+            int i1 = inTriangles[3 * i + 1];
+            int i2 = inTriangles[3 * i + 2];
+            glm::vec3 p0(inVertices[3 * i0], inVertices[3 * i0 + 1], inVertices[3 * i0 + 2]);
+            glm::vec3 p1(inVertices[3 * i1], inVertices[3 * i1 + 1], inVertices[3 * i1 + 2]);
+            glm::vec3 p2(inVertices[3 * i2], inVertices[3 * i2 + 1], inVertices[3 * i2 + 2]);
+
+            glm::vec3 crossed = glm::cross(p1 - p0, p2 - p0);
+            float len = glm::length(crossed);
+            if (len > 1e-8f)
+            {
+                // Unweighted: normalise before accumulating
+                glm::vec3 faceNormal = crossed / len;
+                vertexNormals[i0] += faceNormal;
+                vertexNormals[i1] += faceNormal;
+                vertexNormals[i2] += faceNormal;
+            }
+        }
+        for (int i = 0; i < numVertices; ++i)
+        {
+            float len = glm::length(vertexNormals[i]);
+            if (len > 1e-8f)
+                vertexNormals[i] /= len;
+        }
+    }
+    // For basic mode vertexNormals stays all-zero; makeKey ignores it
+
+    // Phase 1: Grid Discretization and Accumulation
+    std::unordered_map<ClusterKey, CellData, ClusterKeyHash> grid;
+    // Pre-compute and cache each vertex's key — reused in Phase 3
+    vector<ClusterKey> vertexKeys(numVertices);
+    for (int i = 0; i < numVertices; ++i)
+    {
         glm::vec3 pos(inVertices[3 * i], inVertices[3 * i + 1], inVertices[3 * i + 2]);
         glm::vec3 col(inColors[3 * i], inColors[3 * i + 1], inColors[3 * i + 2]);
+        glm::vec3 nor = vertexNormals[i];
 
-        // 1. Compute which regular grid node contains it
-        glm::ivec3 coord(
-            std::floor(pos.x / cellSize),
-            std::floor(pos.y / cellSize),
-            std::floor(pos.z / cellSize)
-        );
-        // 2. Add to sum of points in that cell (+ add one to count of points)
-        CellData &cell = grid[coord];
+        ClusterKey key = makeKey(pos, nor, cellSize, mode);
+        vertexKeys[i] = key;
+
+        CellData &cell = grid[key];
         cell.sumPos += pos;
         cell.sumColor += col;
         cell.count++;
-        }
-        */
-
-    // Lab4
-    // Phase 1: Grid Discretization with 8-Way Normal Subnode Quantization
-    // For each triangle (Important differenc wrt Lab2 )
-    for (size_t i = 0; i < inTriangles.size(); i += 3)
-    {
-        int idx0 = inTriangles[i];
-        int idx1 = inTriangles[i + 1];
-        int idx2 = inTriangles[i + 2];
-
-        glm::vec3 p0(inVertices[3 * idx0], inVertices[3 * idx0 + 1], inVertices[3 * idx0 + 2]);
-        glm::vec3 p1(inVertices[3 * idx1], inVertices[3 * idx1 + 1], inVertices[3 * idx1 + 2]);
-        glm::vec3 p2(inVertices[3 * idx2], inVertices[3 * idx2 + 1], inVertices[3 * idx2 + 2]);
-
-        // Compute the triangle face normal vector on the fly
-        glm::vec3 normal = glm::cross(p1 - p0, p2 - p0);
-        if (glm::length(normal) > 0.0f)
-        {
-            normal = glm::normalize(normal);
-        }
-        else
-        {
-            normal = glm::vec3(0.0f, 1.0f, 0.0f); // Fallback for degenerate faces
-        }
-
-        // Determine which directional subnode octant this triangle faces
-        int octant = getNormalOctant(normal);
-
-        // Process all 3 vertices
-        int faceIndices[3] = {idx0, idx1, idx2};
-        for (int v = 0; v < 3; ++v)
-        {
-            int currentIdx = faceIndices[v];
-            glm::vec3 pos(inVertices[3 * currentIdx], inVertices[3 * currentIdx + 1], inVertices[3 * currentIdx + 2]);
-            glm::vec3 col(inColors[3 * currentIdx], inColors[3 * currentIdx + 1], inColors[3 * currentIdx + 2]);
-
-            // Calculate base 3D grid cell
-            glm::ivec3 coord(
-                std::floor(pos.x / cellSize),
-                std::floor(pos.y / cellSize),
-                std::floor(pos.z / cellSize));
-
-            // Accumulate data into the specific sub-cell corresponding to the normal orientation
-            SubCellData &subCell = grid[coord].subCells[octant];
-            subCell.sumPos += pos;
-            subCell.sumColor += col;
-            subCell.count++;
-        }
     }
+    // Lab2
+    // For each vertex in a model
+    // int numVertices = inVertices.size() / 3;
+    // for (int i = 0; i < numVertices; ++i)
+    // {
+    //     glm::vec3 pos(inVertices[3 * i], inVertices[3 * i + 1], inVertices[3 * i + 2]);
+    //     glm::vec3 col(inColors[3 * i], inColors[3 * i + 1], inColors[3 * i + 2]);
+    // // 1. Compute which regular grid node contains it
+    // glm::ivec3 coord(
+    //     std::floor(pos.x / cellSize),
+    //     std::floor(pos.y / cellSize),
+    //     std::floor(pos.z / cellSize));
+    // // 2. Add to sum of points in that cell (+ add one to count of points)
+    // CellData &cell = grid[coord];
+    // cell.sumPos += pos;
+    // cell.sumColor += col;
+    // cell.count++;
+    // }
 
     // Phase 2: Compute Representatives (Averages)
-    // For each node with points (subcell)
     int nextIndex = 0;
-    for (std::unordered_map<glm::ivec3, CellData>::iterator it = grid.begin(); it != grid.end(); ++it)
+    for (std::unordered_map<ClusterKey, CellData, ClusterKeyHash>::iterator it = grid.begin();
+         it != grid.end(); ++it)
     {
         // 1. Add representative in that node as output vertex
         CellData &cell = it->second;
-
-        // Check all 8 possible subnodes within this spatial address space
-        // Changed for Lab4
-        for (int octant = 0; octant < 8; ++octant)
-        {
-            SubCellData &subCell = cell.subCells[octant];
-
-            // Only generate a representative vertex if vertices actually landed in this sub-cell
-            if (subCell.count > 0)
-            {
-                glm::vec3 avgPos = subCell.sumPos / static_cast<float>(subCell.count);
-                glm::vec3 avgCol = subCell.sumColor / static_cast<float>(subCell.count);
-
-                outVertices.push_back(avgPos.x);
-                outVertices.push_back(avgPos.y);
-                outVertices.push_back(avgPos.z);
-
-                outColors.push_back(avgCol.x);
-                outColors.push_back(avgCol.y);
-                outColors.push_back(avgCol.z);
-                // 2. Store the id of that output vertex in node (subcell)
-                subCell.targetIndex = nextIndex++;
-            }
-        }
+        glm::vec3 avgPos = cell.sumPos / static_cast<float>(cell.count);
+        glm::vec3 avgCol = cell.sumColor / static_cast<float>(cell.count);
+        outVertices.push_back(avgPos.x);
+        outVertices.push_back(avgPos.y);
+        outVertices.push_back(avgPos.z);
+        outColors.push_back(avgCol.x);
+        outColors.push_back(avgCol.y);
+        outColors.push_back(avgCol.z);
+        // 2. Store the id of that output vertex in node
+        cell.targetIndex = nextIndex++;
     }
 
     // Phase 3: Topology Remapping and Triangle Elimination
-    // Lab 2
     // For each input triangle T
-    //     1. Determine node that contains each vertex of T
-    //     2. Update id in triangle to the one stored in node
-    //     3. If triangle has unique ids output it (Filters Degenerate Faces)
-    // Lab 3
+
     for (size_t i = 0; i < inTriangles.size(); i += 3)
     {
-        int origIdx0 = inTriangles[i];
-        int origIdx1 = inTriangles[i + 1];
-        int origIdx2 = inTriangles[i + 2];
+        int id0 = grid.at(vertexKeys[inTriangles[i]]).targetIndex;
+        int id1 = grid.at(vertexKeys[inTriangles[i + 1]]).targetIndex;
+        int id2 = grid.at(vertexKeys[inTriangles[i + 2]]).targetIndex;
 
-        glm::vec3 p0(inVertices[3 * origIdx0], inVertices[3 * origIdx0 + 1], inVertices[3 * origIdx0 + 2]);
-        glm::vec3 p1(inVertices[3 * origIdx1], inVertices[3 * origIdx1 + 1], inVertices[3 * origIdx1 + 2]);
-        glm::vec3 p2(inVertices[3 * origIdx2], inVertices[3 * origIdx2 + 1], inVertices[3 * origIdx2 + 2]);
-        glm::vec3 normal = glm::cross(p1 - p0, p2 - p0);
-
-        if (glm::length(normal) > 0.0f)
-        {
-            normal = glm::normalize(normal);
-        }
-        else
-        {
-            normal = glm::vec3(0.0f, 1.0f, 0.0f);
-        }
-
-        int octant = getNormalOctant(normal);
-
-        // Remap each vertex by looking up its spatial coordinate AND its normal octant index
-        auto getSubCellIndex = [&](int origIdx, const glm::vec3 &vPos)
-        {
-            glm::ivec3 coord(
-                std::floor(vPos.x / cellSize),
-                std::floor(vPos.y / cellSize),
-                std::floor(vPos.z / cellSize));
-            return grid[coord].subCells[octant].targetIndex;
-        };
-
-        int id0 = getSubCellIndex(origIdx0, p0);
-        int id1 = getSubCellIndex(origIdx1, p1);
-        int id2 = getSubCellIndex(origIdx2, p2);
-
-        // Discard collapsed elements
         if (id0 != id1 && id1 != id2 && id2 != id0)
         {
             outTriangles.push_back(id0);
             outTriangles.push_back(id1);
             outTriangles.push_back(id2);
         }
-
-        // // 1. Determine node that contains each vertex of T
-        // glm::ivec3 coord0(
-        //     std::floor(inVertices[3 * origIdx0] / cellSize),
-        //     std::floor(inVertices[3 * origIdx0 + 1] / cellSize),
-        //     std::floor(inVertices[3 * origIdx0 + 2] / cellSize)
-        // );
-
-        // glm::ivec3 coord1(
-        //     std::floor(inVertices[3 * origIdx1] / cellSize),
-        //     std::floor(inVertices[3 * origIdx1 + 1] / cellSize),
-        //     std::floor(inVertices[3 * origIdx1 + 2] / cellSize)
-        // );
-
-        // glm::ivec3 coord2(
-        //     std::floor(inVertices[3 * origIdx2] / cellSize),
-        //     std::floor(inVertices[3 * origIdx2 + 1] / cellSize),
-        //     std::floor(inVertices[3 * origIdx2 + 2] / cellSize)
-        // );
-
-        // // 2. Update id in triangle to the one stored in node
-        // int id0 = grid[coord0].targetIndex;
-        // int id1 = grid[coord1].targetIndex;
-        // int id2 = grid[coord2].targetIndex;
-
-        // // 3. If triangle has unique ids output it (Filters Degenerate Faces)
-        // if (id0 != id1 && id1 != id2 && id2 != id0) {
-        //     outTriangles.push_back(id0);
-        //     outTriangles.push_back(id1);
-        //     outTriangles.push_back(id2);
-        // }
     }
 }
 

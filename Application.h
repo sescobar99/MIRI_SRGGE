@@ -4,6 +4,7 @@
 #include "Scene.h"
 #include "ShaderProgram.h"
 #include <GLFW/glfw3.h>
+#include "Constants.h"
 
 // Application is a singleton (a class with a single instance) that represents our whole app
 
@@ -21,7 +22,7 @@ public:
     }
 
     void init(GLFWwindow *window);
-    bool loadMap(const string &filename);
+    bool loadMap(const string &filename, ClusteringMode mode = ClusteringMode::Basic);
     bool update(int deltaTime);
     void render();
 

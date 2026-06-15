@@ -34,9 +34,9 @@ void Application::init(GLFWwindow *window)
 
 // Load the map into the scene
 
-bool Application::loadMap(const string &filename)
+bool Application::loadMap(const string &filename, ClusteringMode mode)
 {
-    return scene.loadMap(filename);
+    return scene.loadMap(filename, mode);
 }
 
 // Update any animations or state in the scene

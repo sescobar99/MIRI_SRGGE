@@ -17,7 +17,7 @@ class PLYReader
 
 public:
     // Lab 2
-    static bool readMesh(const string &filename, TriangleMesh &mesh, int lodLevel = 0);
+    static bool readMesh(const string &filename, TriangleMesh &mesh, int lodLevel = 0, ClusteringMode mode = ClusteringMode::Basic);
 
 private:
     static bool loadHeader(ifstream &fin, int &nVertices, int &nFaces, bool &hasColors, bool &hasAlpha);
@@ -27,12 +27,12 @@ private:
     static void addModelToMesh(const vector<float> &plyVertices, const vector<float> &plyColors, const vector<int> &plyTriangles, TriangleMesh &mesh);
     // Lab 2
     static void clusterVertices(const vector<float> &inVertices, const vector<float> &inColors, const vector<int> &inTriangles,
-                                float cellSize,
+                                float cellSize, ClusteringMode mode,
                                 vector<float> &outVertices, vector<float> &outColors, vector<int> &outTriangles);
     // Lab 2
     static bool saveMeshToPLY(const string &filename, const vector<float> &vertices, const vector<float> &colors, const vector<int> &triangles);
     // Lab 2
-    static string getLODFilename(const string &originalPath, int lodLevel);
+    static string getLODFilename(const string &originalPath, int lodLevel, ClusteringMode mode);
 };
 
 #endif // PLYREADER_H

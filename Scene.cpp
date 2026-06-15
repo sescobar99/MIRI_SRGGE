@@ -60,7 +60,7 @@ void Scene::init()
 
 // Load the map & all its associated models
 
-bool Scene::loadMap(const string &filename)
+bool Scene::loadMap(const string &filename, ClusteringMode mode)
 {
     ifstream fin(filename);
 
@@ -119,7 +119,7 @@ bool Scene::loadMap(const string &filename)
         {
             // Load Mesh internally delegates the LOD generation to PLYReader, which
             // checks for existing LOD files and creates them if they don't exist
-            group.lod[lodLevel] = loadMesh(modelPath, lodLevel);
+            group.lod[lodLevel] = loadMesh(modelPath, lodLevel, mode);
             if (group.lod[lodLevel] == NULL)
             {
                 loadSuccess = false;
@@ -145,7 +145,7 @@ bool Scene::loadMap(const string &filename)
 
 // Loads the mesh into CPU memory and sends it to GPU memory (using GL)
 
-TriangleMesh *Scene::loadMesh(const string &filename, int lodLevel) const
+TriangleMesh *Scene::loadMesh(const string &filename, int lodLevel, ClusteringMode mode) const
 {
     TriangleMesh *mesh;
 #pragma warning(push)
@@ -154,7 +154,7 @@ TriangleMesh *Scene::loadMesh(const string &filename, int lodLevel) const
 #pragma warning(pop)
 
     mesh = new TriangleMesh();
-    bool bSuccess = reader.readMesh(filename, *mesh, lodLevel);
+    bool bSuccess = reader.readMesh(filename, *mesh, lodLevel, mode);
     if (bSuccess)
         mesh->sendToOpenGL();
     else
