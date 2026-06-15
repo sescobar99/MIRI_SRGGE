@@ -54,6 +54,11 @@ public:
 	bool hasLODLevel(int level) const;
 	size_t getFaceCountAtLOD(int level) const;
 
+	// Lab 6
+	void tickHysteresis();
+	void resetHysteresis();
+	bool isHysteresisLocked(int thresholdFrames) const;
+
 private:
 	// Lab 2 & +
 	// For Museum Exhibits - Holds pointers to all LOD variants of the mesh, and switches between
@@ -75,6 +80,10 @@ private:
 	glm::mat4 transform;
 	float metallic;
 	float roughness;
+
+	// Session 6
+	// Initialised to HYSTERESIS_FRAMES. Make models start free -> first N frames not stuck at coarsest
+	int framesAtCurrentLOD;
 };
 
 #endif // _TRIANGLE_MESH_INSTANCE_INCLUDE

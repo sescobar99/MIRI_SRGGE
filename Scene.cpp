@@ -328,7 +328,8 @@ struct Candidate
     TriangleMeshInstance *inst;
     float d;     // BB diagonal (world-space)
     float D;     // distance to camera
-    int codeLOD; // current code index (4=coarsest, 0=finest)
+    int codeLOD; // current lod (4=coarsest, 0=finest)
+    int prevLOD; // LOD at frame start. used to detect real changes for Lab 6
 };
 
 // Benefit function.
@@ -342,7 +343,7 @@ auto computeBenefit = [](int codeIndex, float d, float D) -> float
 
 void Scene::updateLODs(int deltaTime)
 {
-    // Time critical rendering
+    // Lab 5: Time critical rendering
     // - Compute TPS (triangles/second)
     // - MaxCost = TPS / FPS
     // - Benefit = 1 - d / (2^L·D)
@@ -350,39 +351,55 @@ void Scene::updateLODs(int deltaTime)
     //     - D: Distance between object and viewpoint
     //     - d: Diagonal of the object's bounding box
     // - Max. TotalBenefit, while ensuring that TotalCost < MaxCost
+    // Optimization each frame
 
-    // Optimization each frame:
     const size_t maxCost = static_cast<size_t>(faceBudget);
+    const int coarsestCode = EngineConfig::NUM_LOD_LEVELS - 1;
 
-    // 0. Fixed cost: static geometry that ignores LOD
+    // Lab 6: Hysteresis
+    const int hysteresisFrames = EngineConfig::HYSTERESIS_FRAMES;
+
+    // 0. Fixed cost: static geometry that ignores LOD (walls, floors)
     size_t fixedCost = 0;
     for (auto *obj : objects)
         if (!obj->isLODEnabled())
             fixedCost += obj->getCurrentFaceCount();
 
-    // Remaining budget after static cost
-    const size_t lodBudget = (maxCost > fixedCost) ? maxCost - fixedCost : 0;
-
-    // Start with lowest LOD for all objects
-    // 1. Build candidate list.
+    // 1. Build candidate list. Partition LOD objects locked | free
+    //    Locked: LOD frozen, counted as fixed cost
+    //    Free:   eligible for optimizer -> reset to coarsest, enter pool
     const glm::vec3 camPos = camera.getPosition();
+    size_t lockedCost = 0;
     std::vector<Candidate> candidates;
     candidates.reserve(objects.size());
-    const int coarsestCode = EngineConfig::NUM_LOD_LEVELS - 1;
     for (auto *obj : objects)
     {
         if (!obj->isLODEnabled())
             continue;
 
-        float D = glm::length(camPos - obj->getBBCenter());
-        float d = obj->getBBDiagonal();
-        // cout << "D: " << D << " | d: " << d<< endl;
+        if (obj->isHysteresisLocked(hysteresisFrames))
+        {
+            // Locked -> current LOD is committed for this frame
+            lockedCost += obj->getCurrentFaceCount();
+        }
+        else
+        {
+            // Free -> capture LOD before reset so lod changes can be detected
+            const int prevLOD = obj->getCurrentLOD();
+            const float D = glm::length(camPos - obj->getBBCenter());
+            const float d = obj->getBBDiagonal();
+            // cout << "D: " << D << " | d: " << d<< endl;
 
-        obj->setLODLevel(coarsestCode);
-        // D: Distance between object  and camera
-        // d: diagonal of bb
-        candidates.push_back({obj, d, D, coarsestCode});
+            // Start with lowest LOD for all objects
+            obj->setLODLevel(coarsestCode);
+            // D: Distance between object  and camera
+            // d: diagonal of bb
+            candidates.push_back({obj, d, D, coarsestCode, prevLOD});
+        }
     }
+
+    // Available budget (maxCost already has fixed + locked )
+    const size_t availableBudget = (maxCost > (fixedCost + lockedCost)) ? maxCost - fixedCost - lockedCost : 0;
 
     // Determine total cost of those
     // 2. Calculate initial cost
@@ -390,12 +407,10 @@ void Scene::updateLODs(int deltaTime)
     for (auto &c : candidates)
         totalLODCost += c.inst->getCurrentFaceCount();
 
-    //  Could steps 1 and 2 be performed only at startup?? Maybe
-
     // While total cost < max cost
     // 3. Greedy upgrade loop
     bool anyUpgrade = true;
-    while (anyUpgrade && (totalLODCost < lodBudget))
+    while (anyUpgrade && (totalLODCost < availableBudget))
     {
         anyUpgrade = false;
         float bestRatio = -1.0f;
@@ -416,7 +431,8 @@ void Scene::updateLODs(int deltaTime)
             const size_t costNext = c.inst->getFaceCountAtLOD(nextCode);
 
             const size_t deltaCost = costNext - costCurr;
-            if ((totalLODCost + deltaCost) > lodBudget)
+
+            if ((totalLODCost + deltaCost) > availableBudget)
                 continue; // Over budget
 
             // cout << "CodeLOD: " << c.codeLOD   << " | diagonal: " << c.d <<  " | distance: " << c.D << " | benefit: " << computeBenefit(c.codeLOD, c.d, c.D)  << endl;
@@ -448,5 +464,26 @@ void Scene::updateLODs(int deltaTime)
         }
     }
 
-    totalFacesLastFrame = fixedCost + totalLODCost;
+    //  4. Update hysteresis counters
+    //  two disjoint groups, no overlap
+    //    Locked objects: tick toward unlock (they're not in candidates[])
+    //    Free candidates: LOD changed -> re-lock (reset); stable -> tick
+
+    for (auto *obj : objects)
+    {
+        if (!obj->isLODEnabled())
+            continue;
+        if (obj->isHysteresisLocked(hysteresisFrames))
+            obj->tickHysteresis();
+    }
+
+    for (auto &c : candidates)
+    {
+        if (c.codeLOD != c.prevLOD)
+            c.inst->resetHysteresis(); // LOD changed -> re-lock
+        else
+            c.inst->tickHysteresis(); // LOD un-changed -> closer to be freed
+    }
+
+    totalFacesLastFrame = fixedCost + lockedCost + totalLODCost;
 }

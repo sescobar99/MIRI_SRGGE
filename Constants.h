@@ -14,8 +14,12 @@ namespace EngineConfig
     const int RUNTIME_OPTIMIZER_MODE = NUM_LOD_LEVELS;
 
     // Lab 5: Triangle budget (faces).
-    const int FACE_BUDGET = 50000;
+    // const int FACE_BUDGET = 50000; // This is a good number for regular clustering
+    const int FACE_BUDGET = 170000; // Normal clustering requires higher budgets
     const int FACE_BUDGET_DELTA = (int)(FACE_BUDGET / 10);
+
+    // Lab 6: frames an object must stay at its LOD before the optimizer can touch it again
+    const int HYSTERESIS_FRAMES = 60 * 3; // 3 Second
 
     // Cell scaling dimension boundaries for the clustering matrix
     // Level 0 uses a dummy 0.0f value since it maps directly to the original asset

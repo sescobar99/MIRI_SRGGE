@@ -14,6 +14,7 @@ TriangleMeshInstance::TriangleMeshInstance()
 	}
 	metallic = 0.0f;
 	roughness = 1.0f;
+	framesAtCurrentLOD = EngineConfig::HYSTERESIS_FRAMES;
 }
 
 TriangleMeshInstance::~TriangleMeshInstance()
@@ -149,7 +150,7 @@ glm::vec3 TriangleMeshInstance::getBBCenter() const
 	// PLYReader::rescaleModel already calculates a raw estimate of a bounding box (makes largest
 	// dimension= 1). So, is possible to use that same info in order to avoid AABB calculation on
 	// the fly
-	
+
 	// Models are located in a way such that the lay in the floor perfectly.
 	// As Y axis is not going to change. We can assume the are centered  int the origin (0,0,0)
 	return glm::vec3(transform * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
@@ -161,7 +162,7 @@ float TriangleMeshInstance::getBBDiagonal() const
 	// The scale factors can be obtained from transformation matrix.
 	// This take a big assumption on uniform scaling and does not account for model rotation
 	float maxScale = glm::length(glm::vec3(transform[0]));
-	
+
 	// Diagonal of a 1x1x1 cube is sqrt(3) ~ 1.732f
 	// Assumption that the BB is in reality the unitary cube
 	return 1.732f * maxScale;
@@ -194,4 +195,20 @@ size_t TriangleMeshInstance::getFaceCountAtLOD(int level) const
 	if (LODMeshes[level] == nullptr)
 		return 0;
 	return LODMeshes[level]->getFaceCount();
+}
+
+void TriangleMeshInstance::tickHysteresis()
+{
+	if (framesAtCurrentLOD <= EngineConfig::HYSTERESIS_FRAMES)
+		++framesAtCurrentLOD;
+}
+
+void TriangleMeshInstance::resetHysteresis()
+{
+	framesAtCurrentLOD = 0;
+}
+
+bool TriangleMeshInstance::isHysteresisLocked(int thresholdFrames) const
+{
+	return framesAtCurrentLOD < thresholdFrames;
 }
