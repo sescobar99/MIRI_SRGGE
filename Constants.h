@@ -8,10 +8,14 @@ namespace EngineConfig
     // Total number of discrete LOD asset slots stored per mesh
     const int NUM_LOD_LEVELS = 5;
 
-    // TODO: Lab5
-    // The runtime toggle mode index that triggers the dynamic optimizer loop
+    // Lab 5
+    // Rutime toggle mode index that triggers the dynamic optimizer loop
     // Set this way to use the last LOD slot+1 for dynamic optimization
     const int RUNTIME_OPTIMIZER_MODE = NUM_LOD_LEVELS;
+
+    // Lab 5: Triangle budget (faces).
+    const int FACE_BUDGET = 50000;
+    const int FACE_BUDGET_DELTA = (int)(FACE_BUDGET / 10);
 
     // Cell scaling dimension boundaries for the clustering matrix
     // Level 0 uses a dummy 0.0f value since it maps directly to the original asset
@@ -30,6 +34,15 @@ namespace EngineConfig
         0.060f, // LOD 2: Medium
         0.120f, // LOD 3: Coarse
         0.240f  // LOD 4: Coarsest
+    };
+
+    // White (Base), Green (finest) → Red (coarsest), one colour per code index
+    const glm::vec4 LOD_TINTS[NUM_LOD_LEVELS] = {
+        {1.0f, 1.0f, 1.0f, 1.0f}, // LOD 0: White
+        {0.1f, 0.9f, 0.1f, 1.0f}, // LOD 1: Green
+        {0.9f, 0.9f, 0.1f, 1.0f}, // LOD 2: Yellow
+        {0.9f, 0.5f, 0.1f, 1.0f}, // LOD 3: Orange
+        {0.9f, 0.1f, 0.1f, 1.0f}, // LOD 4: Red
     };
 }
 

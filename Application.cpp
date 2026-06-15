@@ -111,11 +111,24 @@ void Application::keyPressed(int key)
     case GLFW_KEY_LEFT_SHIFT:
         shift = true;
         break;
+    case GLFW_KEY_KP_ADD:
+    case GLFW_KEY_I:
+        scene.adjustBudget(EngineConfig::FACE_BUDGET_DELTA);
+        break;
+    case GLFW_KEY_KP_SUBTRACT:
+    case GLFW_KEY_K:
+        scene.adjustBudget(-EngineConfig::FACE_BUDGET_DELTA);
+        break;
     }
 }
 
 // F1 enters and exits the navigation mode
 // F5 does the same for fullscreen mode
+// 0-4 Changes from LOD 0 to LOD 4
+// 5 Activates critical time rendering (dynamic LOD change)
+// C: Toggles rendering eachLOD of a  different solid color
+// Key Pad + (or I) & Key Pad - (or K) : Increase and decrease the face budget for rendering
+// F: Toggles fps prints
 
 void Application::keyReleased(int key)
 {
@@ -150,7 +163,13 @@ void Application::keyReleased(int key)
         scene.setGlobalLOD(key - GLFW_KEY_0);
         break;
     case GLFW_KEY_5:
-        scene.setGlobalLOD(EngineConfig::RUNTIME_OPTIMIZER_MODE); // TODO: Lab5 dynamic optimization trigger
+        scene.setGlobalLOD(EngineConfig::RUNTIME_OPTIMIZER_MODE); // Lab 5 dynamic optimization trigger
+        break;
+    case GLFW_KEY_C:
+        bDebugLODColors = !bDebugLODColors; // Lab 5 Colored models
+        break;
+    case GLFW_KEY_F:
+        bDebugFPS = !bDebugFPS;
         break;
     case GLFW_KEY_F1:
         bNavigation = !bNavigation;

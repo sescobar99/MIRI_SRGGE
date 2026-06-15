@@ -37,6 +37,10 @@ public:
 
     ShaderProgram *getShader();
 
+    // Lab5
+    bool getDebugLODColors() const { return bDebugLODColors; }
+    bool getDebugFPS() const { return bDebugFPS; }
+
 private:
     void initShaders();
 
@@ -58,6 +62,9 @@ private:
     GLFWmonitor *monitor;   // Monitor used for fullscreen
 
     ShaderProgram basicProgram; // Shader program used for all GL geometry
+
+    bool bDebugLODColors = false; // Flag to render each LOD with different solid colors
+    bool bDebugFPS = false; // Flag to toggle console printing 
 };
 
 #endif // _APPLICATION_INCLUDE

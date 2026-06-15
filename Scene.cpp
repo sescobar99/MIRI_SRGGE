@@ -169,6 +169,10 @@ TriangleMesh *Scene::loadMesh(const string &filename, int lodLevel, ClusteringMo
 void Scene::update(int deltaTime)
 {
     currentTime += deltaTime;
+
+    // Lab 5. If tcr is not activated, the lods are static and assigned to all models equally
+    if (currentGlobalLOD == EngineConfig::RUNTIME_OPTIMIZER_MODE)
+        updateLODs(deltaTime);
 }
 
 // Render the scene. First the room, then the mesh it there is one loaded.
@@ -185,18 +189,21 @@ VectorCamera &Scene::getCamera()
     return camera;
 }
 
+void Scene::adjustBudget(int delta)
+{
+    faceBudget = std::max(0, faceBudget + delta);
+    printf("Face budget: %d\n", faceBudget);
+}
+
 void Scene::setGlobalLOD(int level)
 {
-    // RUNTIME_OPTIMIZER_MODE will be used for Lab 5 dynamic lod for time critical rendering
-    if (level >= 0 && level < EngineConfig::RUNTIME_OPTIMIZER_MODE)
-    {
-        currentGlobalLOD = level;
-        for (std::vector<TriangleMeshInstance *>::iterator it = objects.begin(); it != objects.end(); ++it)
-        {
-            if (*it != nullptr)
-                (*it)->setLODLevel(level);
-        }
-    }
+    currentGlobalLOD = level;
+
+    if (level == EngineConfig::RUNTIME_OPTIMIZER_MODE)
+        return; // updateLODs() takes over each frame
+
+    for (auto *obj : objects)
+        obj->setLODLevel(level);
 }
 
 void Scene::buildRoom(const vector<string> &grid, int columns, int rows)
@@ -314,4 +321,132 @@ bool Scene::placeInstances(ifstream &fin)
     }
 
     return true;
+}
+
+struct Candidate
+{
+    TriangleMeshInstance *inst;
+    float d;     // BB diagonal (world-space)
+    float D;     // distance to camera
+    int codeLOD; // current code index (4=coarsest, 0=finest)
+};
+
+// Benefit function.
+// formulaL0 -> coarsest (LOD4) | formulaL4 -> finest (LOD0). Needed to follow lab formula
+auto computeBenefit = [](int codeIndex, float d, float D) -> float
+{
+    const int formulaL = (EngineConfig::NUM_LOD_LEVELS - 1) - codeIndex;
+    const float denom = glm::pow(2.0f, static_cast<float>(formulaL)) * D;
+    return 1.0f - d / denom;
+};
+
+void Scene::updateLODs(int deltaTime)
+{
+    // Time critical rendering
+    // - Compute TPS (triangles/second)
+    // - MaxCost = TPS / FPS
+    // - Benefit = 1 - d / (2^L·D)
+    //     - L: Clustering level
+    //     - D: Distance between object and viewpoint
+    //     - d: Diagonal of the object's bounding box
+    // - Max. TotalBenefit, while ensuring that TotalCost < MaxCost
+
+    // Optimization each frame:
+    const size_t maxCost = static_cast<size_t>(faceBudget);
+
+    // 0. Fixed cost: static geometry that ignores LOD
+    size_t fixedCost = 0;
+    for (auto *obj : objects)
+        if (!obj->isLODEnabled())
+            fixedCost += obj->getCurrentFaceCount();
+
+    // Remaining budget after static cost
+    const size_t lodBudget = (maxCost > fixedCost) ? maxCost - fixedCost : 0;
+
+    // Start with lowest LOD for all objects
+    // 1. Build candidate list.
+    const glm::vec3 camPos = camera.getPosition();
+    std::vector<Candidate> candidates;
+    candidates.reserve(objects.size());
+    const int coarsestCode = EngineConfig::NUM_LOD_LEVELS - 1;
+    for (auto *obj : objects)
+    {
+        if (!obj->isLODEnabled())
+            continue;
+
+        float D = glm::length(camPos - obj->getBBCenter());
+        float d = obj->getBBDiagonal();
+        // cout << "D: " << D << " | d: " << d<< endl;
+
+        obj->setLODLevel(coarsestCode);
+        // D: Distance between object  and camera
+        // d: diagonal of bb
+        candidates.push_back({obj, d, D, coarsestCode});
+    }
+
+    // Determine total cost of those
+    // 2. Calculate initial cost
+    size_t totalLODCost = 0;
+    for (auto &c : candidates)
+        totalLODCost += c.inst->getCurrentFaceCount();
+
+    //  Could steps 1 and 2 be performed only at startup?? Maybe
+
+    // While total cost < max cost
+    // 3. Greedy upgrade loop
+    bool anyUpgrade = true;
+    while (anyUpgrade && (totalLODCost < lodBudget))
+    {
+        anyUpgrade = false;
+        float bestRatio = -1.0f;
+        int bestIdx = -1;
+
+        // Loop over all models
+        for (int i = 0; i < static_cast<int>(candidates.size()); ++i)
+        {
+            Candidate &c = candidates[i];
+            const int nextCode = c.codeLOD - 1; // one step finer
+
+            if (nextCode < 0)
+                continue; // already at finest
+            if (!c.inst->hasLODLevel(nextCode))
+                continue; // mesh not loaded
+
+            const size_t costCurr = c.inst->getFaceCountAtLOD(c.codeLOD);
+            const size_t costNext = c.inst->getFaceCountAtLOD(nextCode);
+
+            const size_t deltaCost = costNext - costCurr;
+            if ((totalLODCost + deltaCost) > lodBudget)
+                continue; // Over budget
+
+            // cout << "CodeLOD: " << c.codeLOD   << " | diagonal: " << c.d <<  " | distance: " << c.D << " | benefit: " << computeBenefit(c.codeLOD, c.d, c.D)  << endl;
+            const float bCurr = computeBenefit(c.codeLOD, c.d, c.D);
+            const float bNext = computeBenefit(nextCode, c.d, c.D);
+
+            const float dBenefit = bNext - bCurr;
+            // cout << "deltaCost: " << deltaCost << " | dBenefit: " << dBenefit << " | bCurr: " << bCurr << " | bNext: " << bNext << endl;
+
+            // Find object with largest delta_benefit / delta_cost
+            const float ratio = dBenefit / static_cast<float>(deltaCost);
+            if (ratio > bestRatio)
+            {
+                bestRatio = ratio;
+                bestIdx = i;
+            }
+        }
+        // Increase LOD for that object
+        // Update total cost
+        if (bestIdx >= 0)
+        {
+            Candidate &best = candidates[bestIdx];
+            const int nextCode = best.codeLOD - 1;
+            const size_t deltaCost = best.inst->getFaceCountAtLOD(nextCode) - best.inst->getFaceCountAtLOD(best.codeLOD);
+            totalLODCost += deltaCost;
+            best.codeLOD = nextCode;
+            best.inst->setLODLevel(nextCode);
+            anyUpgrade = true;
+        }
+    }
+
+    totalFacesLastFrame = fixedCost + totalLODCost;
 }

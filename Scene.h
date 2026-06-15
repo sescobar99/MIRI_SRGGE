@@ -33,6 +33,9 @@ public:
     // Lab 2
     void setGlobalLOD(int level);
 
+    // Lab 5
+    void adjustBudget(int delta);
+
 private:
     void computeModelViewMatrix();
     // Lab 1
@@ -56,6 +59,11 @@ private:
     float currentTime;
     // Lab 2
     int currentGlobalLOD;
+
+    // Lab 5
+    void updateLODs(int deltaTime);
+    int faceBudget = EngineConfig::FACE_BUDGET;
+    size_t totalFacesLastFrame = 0;
 };
 
 #endif // _SCENE_INCLUDE

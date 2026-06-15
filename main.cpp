@@ -113,8 +113,8 @@ int main(int argc, char *argv[])
         currentTime = glfwGetTime();
         if (currentTime - timePreviousFrame >= timePerFrame)
         {
-
-            cout << "FPS: " << (1.0 / (currentTime - timePreviousFrame)) << endl;
+            if (Application::instance().getDebugFPS())
+                cout << "FPS: " << (1.0 / (currentTime - timePreviousFrame)) << endl;
 
             /* Update & render steps of the game loop */
             if (!Application::instance().update(int(1000.0f * (currentTime - timePreviousFrame))))
