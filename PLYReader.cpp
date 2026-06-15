@@ -316,16 +316,11 @@ static ClusterKey makeKey(const glm::vec3 &pos, const glm::vec3 &normal,
     glm::ivec3 normalCell(0, 0, 0);
     if (mode == ClusteringMode::NormalClustering)
     {
-        constexpr int NORMAL_BINS = 8;
-        constexpr float NORMAL_CELL_SIZE = 2.0f / NORMAL_BINS;
-        // How much angular difference before splitting a cell
-
+        // Sign of each component. 8 octants: (0,0,0) … (1,1,1)
         normalCell = glm::ivec3(
-            (int)std::floor((normal.x + 1.0f) / NORMAL_CELL_SIZE),
-            (int)std::floor((normal.y + 1.0f) / NORMAL_CELL_SIZE),
-            (int)std::floor((normal.z + 1.0f) / NORMAL_CELL_SIZE));
-        // Clamp handles boundary normals that sit exactly on 1.0
-        normalCell = glm::clamp(normalCell, glm::ivec3(0), glm::ivec3(NORMAL_BINS - 1));
+            (normal.x >= 0.0f) ? 1 : 0,
+            (normal.y >= 0.0f) ? 1 : 0,
+            (normal.z >= 0.0f) ? 1 : 0);
     }
 
     return ClusterKey{spatialCell, normalCell};
